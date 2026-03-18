@@ -903,3 +903,168 @@ class DeadlinePlannerApp(tk.Tk):
 
         self.focus_label.config(text=focus_text)
         self.insight_label.config(text=insight)
+
+    def visible_tasks(self) -> list[Task]:
+        filtered = filter_tasks(self.tasks, self.filter_var.get())
+        return sort_tasks(filtered, self.sort_var.get())
+
+    def render_content(self) -> None:
+        self.refresh_summary()
+        for child in self.content_frame.winfo_children():
+            child.destroy()
+
+        if not self.tasks:
+            self.render_empty_state()
+            return
+
+        board = tk.Frame(self.content_frame, bg=self.BG)
+        board.pack(fill="both", expand=True)
+
+        canvas = tk.Canvas(board, bg=self.BG, highlightthickness=0)
+        canvas.pack(side="left", fill="both", expand=True)
+
+        scrollbar = ttk.Scrollbar(board, orient="vertical", command=canvas.yview)
+        scrollbar.pack(side="right", fill="y")
+        canvas.configure(yscrollcommand=scrollbar.set)
+
+        inner = tk.Frame(canvas, bg=self.BG)
+        window = canvas.create_window((0, 0), window=inner, anchor="nw")
+
+        def sync_width(event) -> None:
+            canvas.itemconfigure(window, width=event.width)
+
+        def update_scroll_region(_event=None) -> None:
+            canvas.configure(scrollregion=canvas.bbox("all"))
+
+        def on_mousewheel(event) -> None:
+            canvas.yview_scroll(int(-event.delta / 120), "units")
+
+        canvas.bind("<Configure>", sync_width)
+        inner.bind("<Configure>", update_scroll_region)
+        canvas.bind("<MouseWheel>", on_mousewheel)
+
+        columns = max(1, min(3, self.winfo_width() // 360))
+        self.current_columns = columns
+
+        for index in range(columns):
+            inner.grid_columnconfigure(index, weight=1, uniform="cards")
+
+        cards = [self.build_add_card(inner)]
+        for task in self.visible_tasks():
+            cards.append(self.build_task_card(inner, task))
+
+        for index, card in enumerate(cards):
+            row = index // columns
+            column = index % columns
+            card.grid(row=row, column=column, padx=12, pady=12, sticky="nsew")
+
+    def render_empty_state(self) -> None:
+        empty = tk.Frame(self.content_frame, bg=self.BG)
+        empty.pack(fill="both", expand=True)
+
+        center = tk.Frame(empty, bg=self.BG)
+        center.place(relx=0.5, rely=0.48, anchor="center")
+
+        tk.Button(
+            center,
+            text="+",
+            command=self.open_add_dialog,
+            bg="#F1EFEF",
+            fg="#A6A3A3",
+            activebackground="#FBF7F5",
+            relief="flat",
+            width=4,
+            height=1,
+            font=("Segoe UI", 42),
+            cursor="hand2",
+        ).pack(ipadx=24, ipady=10)
+
+        tk.Label(
+            center,
+            text="Добавить\nЗадачу",
+            justify="center",
+            bg=self.BG,
+            fg="#F8F5F1",
+            font=("Segoe UI", 20, "italic"),
+            pady=18,
+        ).pack()
+
+        hint = tk.Frame(center, bg="#6C8490", padx=18, pady=14)
+        hint.pack(pady=(16, 0))
+
+        tk.Label(
+            hint,
+            text="С чего начать",
+            bg="#6C8490",
+            fg="#FFFFFF",
+            font=("Segoe UI", 12, "bold"),
+        ).pack(anchor="w")
+
+        tk.Label(
+            hint,
+            text="1. Создайте задачу с периодом выполнения.\n2. Отметьте важность, если дедлайн критичен.\n3. Планировщик сам поднимет срочные задачи наверх.",
+            justify="left",
+            bg="#6C8490",
+            fg="#EAF0F2",
+            font=("Segoe UI", 11),
+            pady=6,
+        ).pack(anchor="w")
+
+    def build_add_card(self, parent: tk.Misc) -> tk.Frame:
+        start, end = current_week_range()
+        card = tk.Frame(
+            parent,
+            bg=self.CARD_BG,
+            padx=18,
+            pady=18,
+            highlightthickness=1,
+            highlightbackground="#93B3BE",
+        )
+        card.configure(width=320, height=240)
+        card.grid_propagate(False)
+
+        tk.Label(
+            card,
+            text=f"Ваши задачи   {format_date_short(start)} - {format_date_short(end)}",
+            bg=self.CARD_BG,
+            fg=self.TEXT_PRIMARY,
+            font=("Segoe UI", 10, "bold"),
+        ).pack(anchor="w")
+
+        tk.Label(
+            card,
+            text="Новый дедлайн",
+            bg=self.CARD_BG,
+            fg=self.TEXT_MUTED,
+            font=("Segoe UI", 10),
+            pady=12,
+        ).pack(anchor="w")
+
+        tk.Button(
+            card,
+            text="+ Добавить задачу",
+            command=self.open_add_dialog,
+            bg="#E8E4E2",
+            fg="#47535A",
+            relief="flat",
+            font=("Segoe UI", 11, "bold"),
+            padx=16,
+            pady=8,
+            cursor="hand2",
+        ).pack(anchor="w", pady=(6, 14))
+
+        tk.Label(
+            card,
+            text="Планировщик хранит задачи локально в JSON и сортирует карточки по срочности, дате и важности.",
+            justify="left",
+            wraplength=270,
+            bg=self.CARD_BG,
+            fg=self.TEXT_MUTED,
+            font=("Segoe UI", 10),
+        ).pack(anchor="w")
+
+        return card
+
+
+if __name__ == "__main__":
+    main()
