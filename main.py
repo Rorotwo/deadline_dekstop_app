@@ -1064,6 +1064,216 @@ class DeadlinePlannerApp(tk.Tk):
         ).pack(anchor="w")
 
         return card
+ 
+
+    def build_task_card(self, parent: tk.Misc, task: Task) -> tk.Frame:
+        background = "#668774" if task.completed else self.CARD_BG
+        border = task.urgency_color if not task.completed else "#9FD0AF"
+
+        card = tk.Frame(
+            parent,
+            bg=background,
+            padx=18,
+            pady=18,
+            highlightthickness=2,
+            highlightbackground=border,
+        )
+        card.configure(width=320, height=240)
+        card.grid_propagate(False)
+
+        top_row = tk.Frame(card, bg=background)
+        top_row.pack(fill="x")
+
+        tk.Button(
+            top_row,
+            text="★" if task.important else "☆",
+            command=lambda task_id=task.task_id: self.toggle_important(task_id),
+            bg=background,
+            fg="#FFD45D" if task.important else "#E4ECEF",
+            activebackground=background,
+            activeforeground="#FFD45D",
+            relief="flat",
+            font=("Segoe UI Symbol", 14),
+            cursor="hand2",
+            padx=0,
+        ).pack(side="left")
+
+        tk.Label(
+            top_row,
+            text=task.urgency_label,
+            bg=task.urgency_color,
+            fg="#2A3640",
+            font=("Segoe UI", 9, "bold"),
+            padx=10,
+            pady=4,
+        ).pack(side="right")
+
+        tk.Label(
+            card,
+            text=task.title,
+            justify="left",
+            wraplength=270,
+            bg=background,
+            fg=self.TEXT_PRIMARY,
+            font=("Georgia", 16, "bold"),
+            pady=10,
+        ).pack(anchor="w")
+
+        date_line = f"Период: {format_date_short(task.start)} - {format_date_short(task.due)}"
+        if task.completed and task.completed_at:
+            date_line += "  |  Закрыто"
+
+        tk.Label(
+            card,
+            text=date_line,
+            bg=background,
+            fg=self.TEXT_MUTED,
+            font=("Segoe UI", 10),
+        ).pack(anchor="w")
+
+        progress_wrap = tk.Frame(card, bg=background, pady=10)
+        progress_wrap.pack(fill="x")
+
+        progress = tk.Canvas(progress_wrap, width=280, height=10, bg=background, highlightthickness=0)
+        progress.pack(anchor="w")
+        progress.create_rectangle(0, 0, 280, 10, fill="#9FB2BC", outline="")
+        progress.create_rectangle(0, 0, int(280 * task.progress_ratio), 10, fill=border, outline="")
+
+        tk.Label(
+            card,
+            text=truncate_text(task.description, width=130),
+            justify="left",
+            wraplength=270,
+            bg=background,
+            fg=self.TEXT_PRIMARY,
+            font=("Segoe UI", 10),
+        ).pack(anchor="w", pady=(0, 12))
+
+        footer = tk.Frame(card, bg=background)
+        footer.pack(fill="x", side="bottom")
+
+        self.small_action_button(
+            footer,
+            "Вернуть" if task.completed else "Готово",
+            lambda task_id=task.task_id: self.toggle_completed(task_id),
+        ).pack(side="left")
+
+        self.small_action_button(
+            footer,
+            "Изменить",
+            lambda payload=task: self.open_edit_dialog(payload),
+        ).pack(side="left", padx=8)
+
+        self.small_action_button(
+            footer,
+            "Удалить",
+            lambda task_id=task.task_id: self.delete_task(task_id),
+            bg="#A86562",
+        ).pack(side="right")
+
+        return card
+
+    def small_action_button(self, parent: tk.Misc, text: str, command, bg: str | None = None) -> tk.Button:
+        return tk.Button(
+            parent,
+            text=text,
+            command=command,
+            bg=bg or self.BUTTON_BG,
+            fg="#F9F6F2",
+            activebackground=bg or self.BUTTON_HOVER,
+            relief="flat",
+            padx=12,
+            pady=6,
+            font=("Segoe UI", 9, "bold"),
+            cursor="hand2",
+        )
+
+    def open_add_dialog(self) -> None:
+        TaskDialog(self, self.add_task)
+
+    def open_edit_dialog(self, task: Task) -> None:
+        TaskDialog(self, self.update_task, task=task)
+
+    def add_task(self, task: Task) -> None:
+        self.tasks.insert(0, task)
+        self.persist_and_refresh()
+
+    def update_task(self, updated_task: Task) -> None:
+        for index, task in enumerate(self.tasks):
+            if task.task_id == updated_task.task_id:
+                self.tasks[index] = updated_task
+                break
+        self.persist_and_refresh()
+
+    def toggle_completed(self, task_id: str) -> None:
+        for task in self.tasks:
+            if task.task_id == task_id:
+                task.completed = not task.completed
+                task.completed_at = now_iso() if task.completed else None
+                break
+        self.persist_and_refresh()
+
+    def toggle_important(self, task_id: str) -> None:
+        for task in self.tasks:
+            if task.task_id == task_id:
+                task.important = not task.important
+                break
+        self.persist_and_refresh()
+
+    def delete_task(self, task_id: str) -> None:
+        confirmed = messagebox.askyesno(
+            "Удалить задачу",
+            "Удалить задачу без возможности восстановления?",
+            parent=self,
+        )
+        if not confirmed:
+            return
+        self.tasks = [task for task in self.tasks if task.task_id != task_id]
+        self.persist_and_refresh()
+
+    def persist_and_refresh(self) -> None:
+        self.store.save(self.tasks)
+        self.refresh_summary()
+        self.render_content()
+
+    def on_window_resize(self, event) -> None:
+        if event.widget is not self or not self.tasks:
+            return
+        columns = max(1, min(3, self.winfo_width() // 360))
+        if columns == self.current_columns:
+            return
+        if self.layout_job is not None:
+            self.after_cancel(self.layout_job)
+        self.layout_job = self.after(120, self.render_content)
+
+
+def run_self_check() -> None:
+    today = date.today()
+    tasks = [
+        Task.create("Сдать презентацию", "Финальная подготовка", today, today + timedelta(days=1), True),
+        Task.create("Сделать прототип", "Главный экран", today, today + timedelta(days=4), False),
+        Task.create("Подготовить README", "Кратко описать проект", today, today + timedelta(days=2), False),
+    ]
+    tasks[1].completed = True
+
+    assert focus_task(tasks).title == "Сдать презентацию"
+    assert len(filter_tasks(tasks, "completed")) == 1
+    assert sort_tasks(tasks, "important")[0].important is True
+    print("Self-check passed")
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(add_help=False)
+    parser.add_argument("--self-check", action="store_true")
+    args = parser.parse_args()
+
+    if args.self_check:
+        run_self_check()
+        return
+
+    app = DeadlinePlannerApp()
+    app.mainloop()
+
 
 
 if __name__ == "__main__":
