@@ -503,3 +503,247 @@ class TaskDialog(tk.Toplevel):
         self.bind("<Return>", lambda _event: self.submit())
         self.title_entry.focus_set()
         self.center_relative(master)
+
+    def center_relative(self, master: tk.Misc) -> None:
+        self.update_idletasks()
+        x = master.winfo_rootx() + max((master.winfo_width() - self.winfo_width()) // 2, 20)
+        y = master.winfo_rooty() + max((master.winfo_height() - self.winfo_height()) // 2, 20)
+        self.geometry(f"+{x}+{y}")
+
+    def build_date_field(self, parent: tk.Misc, label_text: str, variable: tk.StringVar) -> tk.Frame:
+        wrapper = tk.Frame(parent, bg="#8AA4AF")
+        tk.Label(
+            wrapper,
+            text=label_text,
+            bg="#8AA4AF",
+            fg="#F7F5F1",
+            font=("Segoe UI", 11),
+        ).pack(anchor="w", pady=(0, 4))
+
+        field = tk.Frame(wrapper, bg="#8AA4AF")
+        field.pack()
+
+        tk.Entry(
+            field,
+            textvariable=variable,
+            width=14,
+            justify="center",
+            font=("Segoe UI", 11),
+            bg="#EFECEC",
+            fg="#243038",
+            relief="flat",
+            insertbackground="#243038",
+        ).pack(side="left", ipady=7)
+
+        tk.Button(
+            field,
+            text="Календарь",
+            command=lambda: self.open_picker(variable),
+            bg="#E6D9D2",
+            fg="#324047",
+            relief="flat",
+            padx=8,
+            pady=7,
+            font=("Segoe UI", 9),
+            cursor="hand2",
+        ).pack(side="left", padx=(6, 0))
+        return wrapper
+
+    def resolve_importance_images(self) -> tuple[tk.PhotoImage, tk.PhotoImage]:
+        checked = None
+        for candidate in (Path("images") / "checkmark_action.jpg", IMAGE_DIR / "checkmark_action.jpg"):
+            if not candidate.exists():
+                continue
+            try:
+                checked = tk.PhotoImage(file=str(candidate)).subsample(24, 24)
+                break
+            except tk.TclError:
+                continue
+
+        if checked is None:
+            checked = self.build_box_icon(fill="#F5F2ED", border="#4B5A63", mark="#4A90E2")
+        unchecked = self.build_box_icon(fill="#F5F2ED", border="#4B5A63")
+        return checked, unchecked
+
+    def build_box_icon(
+        self,
+        fill: str,
+        border: str,
+        mark: str | None = None,
+        size: int = 22,
+    ) -> tk.PhotoImage:
+        image = tk.PhotoImage(width=size, height=size)
+        image.put("#8AA4AF", to=(0, 0, size, size))
+        image.put(fill, to=(2, 2, size - 2, size - 2))
+
+        image.put(border, to=(1, 1, size - 1, 2))
+        image.put(border, to=(1, size - 2, size - 1, size - 1))
+        image.put(border, to=(1, 1, 2, size - 1))
+        image.put(border, to=(size - 2, 1, size - 1, size - 1))
+
+        if mark:
+            for offset in range(4):
+                image.put(mark, to=(6 + offset, 11 + offset, 7 + offset, 12 + offset))
+            for offset in range(7):
+                image.put(mark, to=(9 + offset, 14 - offset, 10 + offset, 15 - offset))
+        return image
+
+    def toggle_importance(self) -> None:
+        self.important_var.set(not self.important_var.get())
+        self.importance_button.configure(
+            image=self.importance_on_image if self.important_var.get() else self.importance_off_image
+        )
+
+    def open_picker(self, variable: tk.StringVar) -> None:
+        try:
+            initial = parse_date(variable.get())
+        except ValueError:
+            initial = date.today()
+        DatePickerDialog(self, initial, lambda chosen: variable.set(chosen.isoformat()))
+
+    def submit(self) -> None:
+        title = self.title_var.get().strip()
+        description = self.description_text.get("1.0", "end").strip()
+
+        if not title:
+            messagebox.showwarning("Пустое название", "Введите название задачи.", parent=self)
+            return
+
+        try:
+            start = parse_date(self.start_var.get())
+            due = parse_date(self.due_var.get())
+        except ValueError:
+            messagebox.showwarning(
+                "Неверная дата",
+                "Используйте формат даты ГГГГ-ММ-ДД или выберите дату из календаря.",
+                parent=self,
+            )
+            return
+
+        if due < start:
+            messagebox.showwarning(
+                "Период заполнен неверно",
+                "Дата завершения не может быть раньше даты начала.",
+                parent=self,
+            )
+            return
+
+        if self.task is None:
+            payload = Task.create(title, description, start, due, self.important_var.get())
+        else:
+            payload = Task(
+                task_id=self.task.task_id,
+                title=title,
+                description=description,
+                start_date=start.isoformat(),
+                due_date=due.isoformat(),
+                important=self.important_var.get(),
+                completed=self.task.completed,
+                created_at=self.task.created_at,
+                completed_at=self.task.completed_at,
+            )
+
+        self.on_submit(payload)
+        self.destroy()
+
+
+class DeadlinePlannerApp(tk.Tk):
+    BG = "#89A4B0"
+    CARD_BG = "#5D7480"
+    TEXT_PRIMARY = "#F7F5F1"
+    TEXT_MUTED = "#DAE3E6"
+    TEXT_DARK = "#243038"
+    INPUT_BG = "#EFEDEC"
+    BUTTON_BG = "#506A77"
+    BUTTON_HOVER = "#627C88"
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.title("Умный планировщик дедлайнов")
+        self.geometry("1320x860")
+        self.minsize(1080, 720)
+        self.configure(bg=self.BG)
+
+        self.store = TaskStore(DATA_FILE)
+        self.tasks = self.store.load()
+        self.filter_var = tk.StringVar(value="all")
+        self.sort_var = tk.StringVar(value="urgency")
+        self.current_columns = 0
+        self.layout_job = None
+
+        self.style = ttk.Style(self)
+        self.style.theme_use("clam")
+        self.style.configure(
+            "Planner.TCombobox",
+            fieldbackground=self.INPUT_BG,
+            background=self.INPUT_BG,
+            foreground=self.TEXT_DARK,
+            arrowcolor=self.TEXT_DARK,
+            borderwidth=0,
+            padding=8,
+        )
+
+        self.build_shell()
+        self.refresh_summary()
+        self.render_content()
+        self.bind("<Configure>", self.on_window_resize)
+
+    def build_shell(self) -> None:
+        self.root_frame = tk.Frame(self, bg=self.BG)
+        self.root_frame.pack(fill="both", expand=True)
+
+        self.build_header(self.root_frame)
+        self.build_summary_bar(self.root_frame)
+        self.build_toolbar(self.root_frame)
+
+        self.content_frame = tk.Frame(self.root_frame, bg=self.BG)
+        self.content_frame.pack(fill="both", expand=True, padx=28, pady=(0, 20))
+
+    def build_header(self, parent: tk.Misc) -> None:
+        header = tk.Frame(parent, bg=self.BG)
+        header.pack(fill="x", padx=28, pady=(22, 16))
+
+        left = tk.Frame(header, bg=self.BG)
+        left.pack(side="left", fill="x", expand=True)
+
+        tk.Label(
+            left,
+            text="Умный планировщик дедлайнов",
+            bg=self.BG,
+            fg="#FFF8F4",
+            font=("Georgia", 30, "bold"),
+        ).pack(anchor="w")
+
+        tk.Label(
+            left,
+            text="Desktop-приложение для задач, сроков, приоритетов и быстрого фокуса на том, что горит первым.",
+            bg=self.BG,
+            fg=self.TEXT_MUTED,
+            font=("Segoe UI", 12),
+            pady=6,
+        ).pack(anchor="w")
+
+        right = tk.Frame(header, bg="#6E8692", padx=18, pady=16)
+        right.pack(side="right")
+
+        self.today_label = tk.Label(
+            right,
+            text=f"Сегодня: {format_date_short(date.today())}",
+            bg="#6E8692",
+            fg="#FFFFFF",
+            font=("Segoe UI", 12, "bold"),
+        )
+        self.today_label.pack(anchor="e")
+
+        self.focus_label = tk.Label(
+            right,
+            text="",
+            justify="right",
+            wraplength=350,
+            bg="#6E8692",
+            fg="#EAF0F2",
+            font=("Segoe UI", 10),
+            pady=8,
+        )
+        self.focus_label.pack(anchor="e")
+
