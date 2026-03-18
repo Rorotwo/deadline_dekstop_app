@@ -746,4 +746,160 @@ class DeadlinePlannerApp(tk.Tk):
             pady=8,
         )
         self.focus_label.pack(anchor="e")
+        
+    def build_summary_bar(self, parent: tk.Misc) -> None:
+        self.summary_frame = tk.Frame(parent, bg=self.BG)
+        self.summary_frame.pack(fill="x", padx=28, pady=(0, 16))
 
+        self.summary_labels = {}
+        specs = (
+            ("Всего задач", "total"),
+            ("Активные", "active"),
+            ("Просрочено", "overdue"),
+            ("Выполнено", "completed"),
+        )
+        for title, key in specs:
+            card = tk.Frame(self.summary_frame, bg="#6A8390", padx=18, pady=14)
+            card.pack(side="left", padx=(0, 12))
+
+            tk.Label(
+                card,
+                text=title,
+                bg="#6A8390",
+                fg="#D8E3E7",
+                font=("Segoe UI", 10),
+            ).pack(anchor="w")
+
+            value_label = tk.Label(
+                card,
+                text="0",
+                bg="#6A8390",
+                fg="#FFFFFF",
+                font=("Georgia", 22, "bold"),
+            )
+            value_label.pack(anchor="w", pady=(6, 0))
+            self.summary_labels[key] = value_label
+
+        insight_card = tk.Frame(self.summary_frame, bg="#F7C6B7", padx=18, pady=14)
+        insight_card.pack(side="left", fill="x", expand=True)
+
+        tk.Label(
+            insight_card,
+            text="Умная подсказка",
+            bg="#F7C6B7",
+            fg="#58474D",
+            font=("Segoe UI", 10, "bold"),
+        ).pack(anchor="w")
+
+        self.insight_label = tk.Label(
+            insight_card,
+            text="",
+            bg="#F7C6B7",
+            fg="#46383F",
+            font=("Segoe UI", 11),
+            justify="left",
+            wraplength=560,
+            pady=6,
+        )
+        self.insight_label.pack(anchor="w")
+
+    def build_toolbar(self, parent: tk.Misc) -> None:
+        toolbar = tk.Frame(parent, bg=self.BG)
+        toolbar.pack(fill="x", padx=28, pady=(0, 16))
+
+        filters_frame = tk.Frame(toolbar, bg=self.BG)
+        filters_frame.pack(side="left")
+
+        self.filter_buttons = {}
+        for key, label in FILTER_OPTIONS.items():
+            button = tk.Button(
+                filters_frame,
+                text=label,
+                command=lambda selected=key: self.set_filter(selected),
+                relief="flat",
+                padx=12,
+                pady=8,
+                font=("Segoe UI", 10),
+                cursor="hand2",
+            )
+            button.pack(side="left", padx=(0, 8))
+            self.filter_buttons[key] = button
+
+        right_side = tk.Frame(toolbar, bg=self.BG)
+        right_side.pack(side="right")
+
+        tk.Label(
+            right_side,
+            text="Сортировка",
+            bg=self.BG,
+            fg=self.TEXT_PRIMARY,
+            font=("Segoe UI", 10, "bold"),
+        ).pack(side="left", padx=(0, 8))
+
+        self.sort_combo_var = tk.StringVar(value=SORT_OPTIONS[self.sort_var.get()])
+        self.sort_combo = ttk.Combobox(
+            right_side,
+            textvariable=self.sort_combo_var,
+            values=list(SORT_OPTIONS.values()),
+            style="Planner.TCombobox",
+            state="readonly",
+            width=20,
+        )
+        self.sort_combo.pack(side="left")
+        self.sort_combo.bind("<<ComboboxSelected>>", self.on_sort_changed)
+
+        self.refresh_filter_buttons()
+
+    def on_sort_changed(self, _event=None) -> None:
+        selected_label = self.sort_combo.get()
+        for key, label in SORT_OPTIONS.items():
+            if label == selected_label:
+                self.sort_var.set(key)
+                break
+        self.render_content()
+
+    def set_filter(self, filter_key: str) -> None:
+        self.filter_var.set(filter_key)
+        self.refresh_filter_buttons()
+        self.render_content()
+
+    def refresh_filter_buttons(self) -> None:
+        current = self.filter_var.get()
+        for key, button in self.filter_buttons.items():
+            active = key == current
+            button.configure(
+                bg="#E9D5CC" if active else "#D9E2E6",
+                fg="#3B4247" if active else "#55656E",
+                activebackground="#F2DDD4" if active else "#E4EDF1",
+            )
+
+    def refresh_summary(self) -> None:
+        total = len(self.tasks)
+        active = len([task for task in self.tasks if not task.completed])
+        overdue = len([task for task in self.tasks if task.is_overdue])
+        completed = len([task for task in self.tasks if task.completed])
+
+        self.summary_labels["total"].config(text=str(total))
+        self.summary_labels["active"].config(text=str(active))
+        self.summary_labels["overdue"].config(text=str(overdue))
+        self.summary_labels["completed"].config(text=str(completed))
+
+        focus = focus_task(self.tasks)
+        if focus is None:
+            focus_text = "Сейчас всё спокойно: активных задач нет."
+            insight = "Добавьте первую задачу, и планировщик сразу подскажет, на чём сфокусироваться."
+        elif focus.is_overdue:
+            focus_text = f"Фокус: срочно закрыть «{focus.title}»."
+            insight = f"Дедлайн уже прошёл {format_date_short(focus.due)}. Лучше начать именно с этой задачи."
+        elif focus.days_left == 0:
+            focus_text = f"Фокус: сегодня завершить «{focus.title}»."
+            insight = "У задачи дедлайн сегодня, поэтому она поднялась на самый верх списка."
+        elif focus.important:
+            focus_text = f"Фокус: важная задача «{focus.title}»."
+            insight = f"До дедлайна {focus.days_left} дн. Важность включена, поэтому задача считается приоритетной."
+        else:
+            focus_text = f"Фокус: следующая задача «{focus.title}»."
+            insight = f"До срока осталось {focus.days_left} дн. Планировщик держит её выше менее срочных задач."
+
+        self.focus_label.config(text=focus_text)
+        self.insight_label.config(text=insight)
