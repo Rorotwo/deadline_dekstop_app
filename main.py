@@ -10,7 +10,6 @@ from pathlib import Path
 import tkinter as tk
 from tkinter import messagebox, ttk
 
-
 DATA_FILE = Path(__file__).with_name("tasks_data.json")
 IMAGE_DIR = Path(__file__).with_name("images")
 
@@ -151,12 +150,12 @@ class Task:
 
     @classmethod
     def create(
-        cls,
-        title: str,
-        description: str,
-        start: date,
-        due: date,
-        important: bool,
+            cls,
+            title: str,
+            description: str,
+            start: date,
+            due: date,
+            important: bool,
     ) -> "Task":
         return cls(
             task_id=f"task-{int(datetime.now().timestamp() * 1000)}",
@@ -183,6 +182,7 @@ class Task:
 
     def to_dict(self) -> dict:
         return asdict(self)
+
 
 class TaskStore:
     def __init__(self, path: Path) -> None:
@@ -566,11 +566,11 @@ class TaskDialog(tk.Toplevel):
         return checked, unchecked
 
     def build_box_icon(
-        self,
-        fill: str,
-        border: str,
-        mark: str | None = None,
-        size: int = 22,
+            self,
+            fill: str,
+            border: str,
+            mark: str | None = None,
+            size: int = 22,
     ) -> tk.PhotoImage:
         image = tk.PhotoImage(width=size, height=size)
         image.put("#8AA4AF", to=(0, 0, size, size))
@@ -746,7 +746,7 @@ class DeadlinePlannerApp(tk.Tk):
             pady=8,
         )
         self.focus_label.pack(anchor="e")
-        
+
     def build_summary_bar(self, parent: tk.Misc) -> None:
         self.summary_frame = tk.Frame(parent, bg=self.BG)
         self.summary_frame.pack(fill="x", padx=28, pady=(0, 16))
@@ -1064,7 +1064,6 @@ class DeadlinePlannerApp(tk.Tk):
         ).pack(anchor="w")
 
         return card
- 
 
     def build_task_card(self, parent: tk.Misc, task: Task) -> tk.Frame:
         background = "#668774" if task.completed else self.CARD_BG
@@ -1275,6 +1274,7 @@ def main() -> None:
     app.mainloop()
 
 
-
 if __name__ == "__main__":
     main()
+
+
