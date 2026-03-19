@@ -40,6 +40,7 @@ SORT_OPTIONS = {
     "urgency": "Сначала срочные",
     "due": "По дедлайну",
     "important": "По важности",
+    "tags": "По тегам",
     "created": "Сначала новые",
     "title": "По названию",
 }
@@ -70,6 +71,43 @@ def current_week_range(reference: date | None = None) -> tuple[date, date]:
     return start, start + timedelta(days=6)
 
 
+def normalize_tags(raw_tags: list[str] | tuple[str, ...] | str | None) -> list[str]:
+    if raw_tags is None:
+        return []
+    if isinstance(raw_tags, str):
+        candidates = raw_tags.replace("\n", ",").replace(";", ",").split(",")
+    else:
+        candidates = raw_tags
+
+    result: list[str] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        clean = " ".join(str(candidate).replace("#", " ").split()).strip()
+        if not clean:
+            continue
+        token = clean.casefold()
+        if token in seen:
+            continue
+        seen.add(token)
+        result.append(clean)
+    return result
+
+
+def tags_to_text(tags: list[str]) -> str:
+    if not tags:
+        return "Без тегов"
+    return " ".join(f"#{tag}" for tag in tags)
+
+
+def matches_tag_query(task: "Task", query: str) -> bool:
+    search_terms = normalize_tags(query)
+    if not search_terms:
+        return True
+
+    searchable_tags = [tag.casefold() for tag in task.tags]
+    return all(any(term.casefold() in tag for tag in searchable_tags) for term in search_terms)
+
+
 @dataclass(slots=True)
 class Task:
     task_id: str
@@ -77,6 +115,7 @@ class Task:
     description: str
     start_date: str
     due_date: str
+    tags: list[str] = field(default_factory=list)
     important: bool = False
     completed: bool = False
     created_at: str = field(default_factory=now_iso)
@@ -148,6 +187,10 @@ class Task:
             score -= 120
         return score
 
+    @property
+    def primary_tag(self) -> str:
+        return self.tags[0].casefold() if self.tags else "\uffff"
+
     @classmethod
     def create(
             cls,
@@ -155,6 +198,7 @@ class Task:
             description: str,
             start: date,
             due: date,
+            tags: list[str],
             important: bool,
     ) -> "Task":
         return cls(
@@ -163,6 +207,7 @@ class Task:
             description=description.strip(),
             start_date=start.isoformat(),
             due_date=due.isoformat(),
+            tags=normalize_tags(tags),
             important=important,
         )
 
@@ -174,6 +219,7 @@ class Task:
             description=payload.get("description", ""),
             start_date=payload["start_date"],
             due_date=payload["due_date"],
+            tags=normalize_tags(payload.get("tags")),
             important=payload.get("important", False),
             completed=payload.get("completed", False),
             created_at=payload.get("created_at", now_iso()),
@@ -228,6 +274,8 @@ def sort_tasks(tasks: list[Task], sort_key: str) -> list[Task]:
         return sorted(tasks, key=lambda task: (task.completed, task.due, not task.important, task.title.casefold()))
     if sort_key == "important":
         return sorted(tasks, key=lambda task: (task.completed, not task.important, task.due, task.title.casefold()))
+    if sort_key == "tags":
+        return sorted(tasks, key=lambda task: (task.completed, task.primary_tag, task.due, task.title.casefold()))
     if sort_key == "created":
         return sorted(tasks, key=lambda task: task.created_at, reverse=True)
     if sort_key == "title":
@@ -382,6 +430,7 @@ class TaskDialog(tk.Toplevel):
         self.title_var = tk.StringVar(value=task.title if task else "")
         self.start_var = tk.StringVar(value=default_start.isoformat())
         self.due_var = tk.StringVar(value=default_due.isoformat())
+        self.tags_var = tk.StringVar(value=", ".join(task.tags) if task else "")
         self.important_var = tk.BooleanVar(value=task.important if task else False)
 
         self.card = tk.Frame(self, bg="#8AA4AF", padx=30, pady=24)
@@ -430,6 +479,33 @@ class TaskDialog(tk.Toplevel):
         self.description_text.pack(fill="x")
         if task and task.description:
             self.description_text.insert("1.0", task.description)
+
+        tk.Label(
+            self.card,
+            text="Теги",
+            bg="#8AA4AF",
+            fg="#F7F5F1",
+            font=("Segoe UI", 12, "italic"),
+        ).pack(pady=(18, 8))
+
+        tk.Entry(
+            self.card,
+            textvariable=self.tags_var,
+            font=("Segoe UI", 12),
+            bg="#EFECEC",
+            fg="#243038",
+            relief="flat",
+            insertbackground="#243038",
+        ).pack(ipady=8, fill="x")
+
+        tk.Label(
+            self.card,
+            text="Например: учеба, спорт, саморазвитие",
+            bg="#8AA4AF",
+            fg="#E3ECEF",
+            font=("Segoe UI", 9),
+            pady=6,
+        ).pack(anchor="w")
 
         tk.Label(
             self.card,
@@ -604,6 +680,7 @@ class TaskDialog(tk.Toplevel):
     def submit(self) -> None:
         title = self.title_var.get().strip()
         description = self.description_text.get("1.0", "end").strip()
+        tags = normalize_tags(self.tags_var.get())
 
         if not title:
             messagebox.showwarning("Пустое название", "Введите название задачи.", parent=self)
@@ -629,7 +706,7 @@ class TaskDialog(tk.Toplevel):
             return
 
         if self.task is None:
-            payload = Task.create(title, description, start, due, self.important_var.get())
+            payload = Task.create(title, description, start, due, tags, self.important_var.get())
         else:
             payload = Task(
                 task_id=self.task.task_id,
@@ -637,6 +714,7 @@ class TaskDialog(tk.Toplevel):
                 description=description,
                 start_date=start.isoformat(),
                 due_date=due.isoformat(),
+                tags=tags,
                 important=self.important_var.get(),
                 completed=self.task.completed,
                 created_at=self.task.created_at,
@@ -668,6 +746,7 @@ class DeadlinePlannerApp(tk.Tk):
         self.tasks = self.store.load()
         self.filter_var = tk.StringVar(value="all")
         self.sort_var = tk.StringVar(value="urgency")
+        self.tag_query_var = tk.StringVar()
         self.current_columns = 0
         self.layout_job = None
 
@@ -687,6 +766,7 @@ class DeadlinePlannerApp(tk.Tk):
         self.refresh_summary()
         self.render_content()
         self.bind("<Configure>", self.on_window_resize)
+        self.tag_query_var.trace_add("write", self.on_tag_query_changed)
 
     def build_shell(self) -> None:
         self.root_frame = tk.Frame(self, bg=self.BG)
@@ -848,6 +928,40 @@ class DeadlinePlannerApp(tk.Tk):
         self.sort_combo.pack(side="left")
         self.sort_combo.bind("<<ComboboxSelected>>", self.on_sort_changed)
 
+        tk.Label(
+            right_side,
+            text="Теги",
+            bg=self.BG,
+            fg=self.TEXT_PRIMARY,
+            font=("Segoe UI", 10, "bold"),
+        ).pack(side="left", padx=(16, 8))
+
+        self.tag_search_entry = tk.Entry(
+            right_side,
+            textvariable=self.tag_query_var,
+            width=22,
+            font=("Segoe UI", 10),
+            bg=self.INPUT_BG,
+            fg=self.TEXT_DARK,
+            relief="flat",
+            insertbackground=self.TEXT_DARK,
+        )
+        self.tag_search_entry.pack(side="left", ipady=7)
+
+        tk.Button(
+            right_side,
+            text="Сбросить",
+            command=self.clear_tag_search,
+            bg="#D9E2E6",
+            fg="#425057",
+            activebackground="#E4EDF1",
+            relief="flat",
+            padx=10,
+            pady=7,
+            font=("Segoe UI", 9),
+            cursor="hand2",
+        ).pack(side="left", padx=(8, 0))
+
         self.refresh_filter_buttons()
 
     def on_sort_changed(self, _event=None) -> None:
@@ -857,6 +971,13 @@ class DeadlinePlannerApp(tk.Tk):
                 self.sort_var.set(key)
                 break
         self.render_content()
+
+    def on_tag_query_changed(self, *_args) -> None:
+        self.render_content()
+
+    def clear_tag_search(self) -> None:
+        if self.tag_query_var.get():
+            self.tag_query_var.set("")
 
     def set_filter(self, filter_key: str) -> None:
         self.filter_var.set(filter_key)
@@ -906,7 +1027,8 @@ class DeadlinePlannerApp(tk.Tk):
 
     def visible_tasks(self) -> list[Task]:
         filtered = filter_tasks(self.tasks, self.filter_var.get())
-        return sort_tasks(filtered, self.sort_var.get())
+        tagged = [task for task in filtered if matches_tag_query(task, self.tag_query_var.get())]
+        return sort_tasks(tagged, self.sort_var.get())
 
     def render_content(self) -> None:
         self.refresh_summary()
@@ -950,8 +1072,12 @@ class DeadlinePlannerApp(tk.Tk):
             inner.grid_columnconfigure(index, weight=1, uniform="cards")
 
         cards = [self.build_add_card(inner)]
-        for task in self.visible_tasks():
+        visible_tasks = self.visible_tasks()
+        for task in visible_tasks:
             cards.append(self.build_task_card(inner, task))
+
+        if not visible_tasks and self.tag_query_var.get().strip():
+            cards.append(self.build_search_empty_card(inner))
 
         for index, card in enumerate(cards):
             row = index // columns
@@ -1055,13 +1181,71 @@ class DeadlinePlannerApp(tk.Tk):
 
         tk.Label(
             card,
-            text="Планировщик хранит задачи локально в JSON и сортирует карточки по срочности, дате и важности.",
+            text="Планировщик хранит задачи локально в JSON, поддерживает теги и позволяет быстро искать карточки по ним.",
             justify="left",
             wraplength=270,
             bg=self.CARD_BG,
             fg=self.TEXT_MUTED,
             font=("Segoe UI", 10),
         ).pack(anchor="w")
+
+        return card
+
+    def build_search_empty_card(self, parent: tk.Misc) -> tk.Frame:
+        card = tk.Frame(
+            parent,
+            bg="#6A8390",
+            padx=18,
+            pady=18,
+            highlightthickness=1,
+            highlightbackground="#B8D0D8",
+        )
+        card.configure(width=320, height=240)
+        card.grid_propagate(False)
+
+        tk.Label(
+            card,
+            text="По тегам ничего не найдено",
+            justify="left",
+            wraplength=270,
+            bg="#6A8390",
+            fg="#FFFFFF",
+            font=("Georgia", 16, "bold"),
+            pady=8,
+        ).pack(anchor="w")
+
+        tk.Label(
+            card,
+            text=f"Запрос: {self.tag_query_var.get().strip()}",
+            bg="#6A8390",
+            fg="#EAF0F2",
+            font=("Segoe UI", 10),
+            pady=6,
+        ).pack(anchor="w")
+
+        tk.Label(
+            card,
+            text="Попробуйте часть тега, другой регистр или очистите поиск.",
+            justify="left",
+            wraplength=270,
+            bg="#6A8390",
+            fg="#DCE6EA",
+            font=("Segoe UI", 10),
+            pady=8,
+        ).pack(anchor="w")
+
+        tk.Button(
+            card,
+            text="Очистить поиск",
+            command=self.clear_tag_search,
+            bg="#E8E4E2",
+            fg="#47535A",
+            relief="flat",
+            font=("Segoe UI", 10, "bold"),
+            padx=14,
+            pady=8,
+            cursor="hand2",
+        ).pack(anchor="w", pady=(10, 0))
 
         return card
 
@@ -1129,6 +1313,18 @@ class DeadlinePlannerApp(tk.Tk):
             fg=self.TEXT_MUTED,
             font=("Segoe UI", 10),
         ).pack(anchor="w")
+
+        if task.tags:
+            tk.Label(
+                card,
+                text=truncate_text(tags_to_text(task.tags), width=52),
+                justify="left",
+                wraplength=270,
+                bg=background,
+                fg="#F7DCA4",
+                font=("Segoe UI", 9, "bold"),
+                pady=6,
+            ).pack(anchor="w")
 
         progress_wrap = tk.Frame(card, bg=background, pady=10)
         progress_wrap.pack(fill="x")
@@ -1249,15 +1445,18 @@ class DeadlinePlannerApp(tk.Tk):
 def run_self_check() -> None:
     today = date.today()
     tasks = [
-        Task.create("Сдать презентацию", "Финальная подготовка", today, today + timedelta(days=1), True),
-        Task.create("Сделать прототип", "Главный экран", today, today + timedelta(days=4), False),
-        Task.create("Подготовить README", "Кратко описать проект", today, today + timedelta(days=2), False),
+        Task.create("Сдать презентацию", "Финальная подготовка", today, today + timedelta(days=1), ["Pitch", "Demo"], True),
+        Task.create("Сделать прототип", "Главный экран", today, today + timedelta(days=4), ["Frontend"], False),
+        Task.create("Подготовить README", "Кратко описать проект", today, today + timedelta(days=2), ["Docs"], False),
     ]
     tasks[1].completed = True
 
     assert focus_task(tasks).title == "Сдать презентацию"
     assert len(filter_tasks(tasks, "completed")) == 1
     assert sort_tasks(tasks, "important")[0].important is True
+    assert sort_tasks(tasks, "tags")[0].tags[0] == "Docs"
+    assert matches_tag_query(tasks[0], "pit") is True
+    assert matches_tag_query(tasks[2], "front") is False
     print("Self-check passed")
 
 
@@ -1276,5 +1475,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
-
